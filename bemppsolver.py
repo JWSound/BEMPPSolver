@@ -9,9 +9,12 @@ via the Bempp-cl library.
 """
 
 import argparse
+import multiprocessing as mp
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Tuple
+from typing import List, Sequence, Tuple
 import bempp_cl.api
 import meshio
 import numpy as np
@@ -38,6 +41,7 @@ class SimulationConfig:
     tag_throat: int = 2             # Mesh physical tag index for the disc representing the compression driver
     scale_factor: float = 0.001     # Mesh should be scaled to mm
     use_burton_miller: bool = True  # Use Burton-Miller formulation to mitigate fictitious resonances
+    workers: int = 3
 
     # Output controls
     output_npz_base_path: str = "pressure_data"
@@ -108,6 +112,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=CONFIG.observation_axial_offset_m,
         help="Shift the polar evaluation origin along +Z in meters",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=CONFIG.workers,
+        help="Number of worker processes to use for the frequency sweep",
+    )
     return parser
 
 
@@ -127,8 +137,21 @@ def _config_from_args(args: argparse.Namespace) -> SimulationConfig:
         tag_throat=CONFIG.tag_throat,
         scale_factor=CONFIG.scale_factor,
         use_burton_miller=CONFIG.use_burton_miller,
+        workers=args.workers,
         output_npz_base_path=args.output_npz_base_path,
     )
+
+
+def _split_frequencies_evenly(frequencies: np.ndarray, worker_count: int) -> List[np.ndarray]:
+    if worker_count <= 1 or len(frequencies) == 0:
+        return [frequencies]
+
+    return [chunk for chunk in np.array_split(frequencies, worker_count) if len(chunk) > 0]
+
+
+def _solve_frequency_chunk(config: SimulationConfig, frequencies: Sequence[float]):
+    solver = HornBEMSolver(config)
+    return solver.solve_frequencies(np.asarray(frequencies, dtype=float), show_progress=False)
 
 # ==========================================
 # Solver Class
@@ -261,7 +284,19 @@ class HornBEMSolver:
             self.cfg.freq_count
         )
 
-        print(f"Starting solver: {len(frequencies)} frequencies.")
+        worker_count = self._resolve_worker_count(len(frequencies))
+        print(
+            f"Starting solver: {len(frequencies)} frequencies "
+            f"using {worker_count} worker{'s' if worker_count != 1 else ''}."
+        )
+
+        if worker_count == 1:
+            return self.solve_frequencies(frequencies, show_progress=True)
+
+        return self._solve_sweep_parallel(frequencies, worker_count)
+
+    def solve_frequencies(self, frequencies: Sequence[float], show_progress: bool = True) -> Tuple[list, np.ndarray]:
+        frequencies = np.asarray(frequencies, dtype=float)
 
         results_polar = []
         results_imp = []
@@ -269,10 +304,46 @@ class HornBEMSolver:
             res_h, res_v, res_z = self._solve_single_frequency(freq)
             results_polar.append((freq, res_h, res_v))
             results_imp.append(res_z)
-            print(f"[{i+1}/{len(frequencies)}] {freq:.1f} Hz")
+            if show_progress:
+                print(f"[{i+1}/{len(frequencies)}] {freq:.1f} Hz")
 
         imp_matrix = np.asarray(results_imp, dtype=np.float32)
         return results_polar, imp_matrix
+
+    def _resolve_worker_count(self, frequency_count: int) -> int:
+        if self.cfg.workers < 1:
+            raise ValueError("workers must be >= 1.")
+
+        return min(self.cfg.workers, max(1, frequency_count), os.cpu_count() or 1)
+
+    def _solve_sweep_parallel(self, frequencies: np.ndarray, worker_count: int) -> Tuple[list, np.ndarray]:
+        chunks = _split_frequencies_evenly(frequencies, worker_count)
+        ctx = mp.get_context("spawn")
+        chunk_results = {}
+        completed = 0
+
+        with ProcessPoolExecutor(max_workers=len(chunks), mp_context=ctx) as executor:
+            futures = {
+                executor.submit(_solve_frequency_chunk, self.cfg, chunk.tolist()): index
+                for index, chunk in enumerate(chunks)
+            }
+
+            for future in as_completed(futures):
+                index = futures[future]
+                polar_chunk, imp_chunk = future.result()
+                chunk_results[index] = (polar_chunk, imp_chunk)
+                completed += len(polar_chunk)
+                print(f"[{completed}/{len(frequencies)}] completed worker chunk {index + 1}/{len(chunks)}")
+
+        polar_results = []
+        imp_results = []
+        for index in range(len(chunks)):
+            polar_chunk, imp_chunk = chunk_results[index]
+            polar_results.extend(polar_chunk)
+            imp_results.append(imp_chunk)
+
+        imp_matrix = np.vstack(imp_results).astype(np.float32, copy=False)
+        return polar_results, imp_matrix
 
     def _solve_single_frequency(self, freq):
         omega = 2 * np.pi * freq
@@ -377,6 +448,7 @@ class HornBEMSolver:
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     args = _build_arg_parser().parse_args()
     config = _config_from_args(args)
     t_start = time.time()

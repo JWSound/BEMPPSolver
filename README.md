@@ -82,6 +82,7 @@ Default output:
 Important settings are still defined in `SimulationConfig` in `bemppsolver.py`, including:
 
 - frequency range and number of frequency points
+- worker count for process-based parallel execution
 - sound speed and density
 - observation distance
 - axial offset for polar origin
@@ -97,7 +98,7 @@ python bemppsolver.py
 Run with CLI overrides:
 
 ```bash
-python bemppsolver.py samplemesh_clean.msh --output-npz-base-path pressure_data --freq-min 200 --freq-max 20000 --freq-count 72 --polar-angle-step-deg 2.5 --polar-angle-min-deg -180 --polar-angle-max-deg 180 --observation-axial-offset-m 0.116
+python bemppsolver.py samplemesh_clean.msh --output-npz-base-path pressure_data --freq-min 200 --freq-max 20000 --freq-count 72 --polar-angle-step-deg 2.5 --polar-angle-min-deg -180 --polar-angle-max-deg 180 --observation-axial-offset-m 0.116 --workers 4
 ```
 
 The solver currently supports these CLI inputs:
@@ -111,6 +112,9 @@ The solver currently supports these CLI inputs:
 - `--polar-angle-min-deg`
 - `--polar-angle-max-deg`
 - `--observation-axial-offset-m`
+- `--workers`
+
+`--workers` uses a spawn-based process pool and splits the frequency sweep into equally sized chunks. This is process-based rather than thread-based so it works consistently on Windows, macOS, and Linux.
 
 ### 3. Prepare visualization data
 
