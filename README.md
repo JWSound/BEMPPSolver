@@ -186,15 +186,6 @@ The visualizer supports these CLI inputs:
 - `--output-impedance-png`
 - `--isobar-interp-freq-factor`
 
-## CLI Notes
-
-The workflow follows the same general CLI pattern across all four scripts:
-
-- `cleanmesh.py` supports a positional input path, a positional output path, and optional flags.
-- `bemppsolver.py` now follows the same pattern with a positional mesh path and optional flags.
-- `prepare_visualization_data.py` now supports positional input/output paths plus optional processing flags.
-- `visualizer.py` now accepts a positional input file, named output options, and a single interpolation flag for frequency upsampling.
-
 ## Typical Run Sequence
 
 ```bash
