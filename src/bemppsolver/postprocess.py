@@ -1,7 +1,7 @@
 """
 Formats BEM solver output for visualization or analysis in downstream modules.
 
-    - Ingests pressure_data.npz from bemppsolver.py (horizontal/vertical polar data)
+    - Ingests pressure_data_raw.npz from the solver package output (horizontal/vertical polar data)
     - Creates pressure_data_formatted.npz containing plot-ready arrays:
         * clipped polar SPL matrices
         * Fractional octave smoothed horizontal and vertical isobar matrices
@@ -16,20 +16,22 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
+from bemppsolver.defaults import FORMATTED_OUTPUT_NPZ, SOLVER_OUTPUT_NPZ
+
 
 @dataclass
 class PrepConfig:
-    input_polar_npz: Path = Path("pressure_data.npz")
-    output_npz: Path = Path("pressure_data_formatted.npz")
+    input_polar_npz: Path = SOLVER_OUTPUT_NPZ
+    output_npz: Path = FORMATTED_OUTPUT_NPZ
 
     min_db: float = -30.0   #minimum dB for clipping SPL data
     max_db: float = 0.0     #maximum dB for clipping SPL data
 
-    isobar_angle_samples_smooth: int = 250
-    isobar_freq_samples_smooth: int = 500
-    isobar_octave_smooth_fraction: int | float | None = 24  #fractional octave smoothing for plots
-    horizontal_reference_angle_deg: float = 10              #normalization angle for horizontal plane
-    vertical_reference_angle_deg: float = 10                #normalization angle for vertical plane
+    angle_samples: int = 250
+    freq_samples: int = 500
+    octave_smoothing: int | float | None = 24  #fractional octave smoothing for plots
+    hor_ref_angle: float = 10                  #normalization angle for horizontal plane
+    vert_ref_angle: float = 10                 #normalization angle for vertical plane
 
 
 def _load_polar_npz(file_path: Path) -> dict[str, np.ndarray]:
@@ -57,6 +59,11 @@ def _load_polar_npz(file_path: Path) -> dict[str, np.ndarray]:
         z_freq = np.asarray(data["impedance_freq_hz"], dtype=float)
         z_real = np.asarray(data["impedance_real"], dtype=float)
         z_imag = np.asarray(data["impedance_imag"], dtype=float)
+        z_names = np.asarray(
+            data["impedance_radiator_names"]
+            if "impedance_radiator_names" in data.files
+            else ["Radiator"],
+        )
 
     if horizontal.ndim != 2 or vertical.ndim != 2:
         raise ValueError("horizontal/vertical SPL arrays must be 2D (n_freq, n_angles).")
@@ -66,8 +73,17 @@ def _load_polar_npz(file_path: Path) -> dict[str, np.ndarray]:
         raise ValueError("horizontal/vertical SPL first axis must match freq_hz length.")
     if horizontal.shape[1] != angles_deg.size:
         raise ValueError("polar_angle_deg length must match SPL second axis.")
-    if z_freq.size != z_real.size or z_real.size != z_imag.size:
-        raise ValueError("Impedance arrays must have matching lengths.")
+    if z_real.ndim == 1:
+        z_real = z_real[np.newaxis, :]
+        z_imag = z_imag[np.newaxis, :]
+    if z_real.ndim != 2 or z_imag.ndim != 2:
+        raise ValueError("Impedance real/imag arrays must be 1D or 2D.")
+    if z_real.shape != z_imag.shape:
+        raise ValueError("Impedance real/imag arrays must have matching shapes.")
+    if z_real.shape[1] != z_freq.size:
+        raise ValueError("Impedance arrays second axis must match impedance_freq_hz length.")
+    if z_names.size != z_real.shape[0]:
+        raise ValueError("impedance_radiator_names length must match impedance array first axis.")
 
     return {
         "freq_hz": freq_hz,
@@ -75,6 +91,7 @@ def _load_polar_npz(file_path: Path) -> dict[str, np.ndarray]:
         "horizontal_spl_norm_db": horizontal,
         "vertical_spl_norm_db": vertical,
         "impedance_freq_hz": z_freq,
+        "impedance_radiator_names": z_names,
         "impedance_real": z_real,
         "impedance_imag": z_imag,
     }
@@ -183,37 +200,38 @@ def prepare_visualization_data(cfg: PrepConfig):
     horizontal = _normalize_plane_to_reference_angle(
         horizontal,
         base_angles_deg,
-        cfg.horizontal_reference_angle_deg,
+        cfg.hor_ref_angle,
     )
     vertical = _normalize_plane_to_reference_angle(
         vertical,
         base_angles_deg,
-        cfg.vertical_reference_angle_deg,
+        cfg.vert_ref_angle,
     )
 
-    horizontal = _fractional_octave_smooth(horizontal, freq_hz, cfg.isobar_octave_smooth_fraction)
-    vertical = _fractional_octave_smooth(vertical, freq_hz, cfg.isobar_octave_smooth_fraction)
+    horizontal = _fractional_octave_smooth(horizontal, freq_hz, cfg.octave_smoothing)
+    vertical = _fractional_octave_smooth(vertical, freq_hz, cfg.octave_smoothing)
 
     isobar_angles, isobar_freqs, horizontal_interp = _interpolate_isobar_heatmap(
         base_angles_deg,
         freq_hz,
         horizontal,
-        cfg.isobar_angle_samples_smooth,
-        cfg.isobar_freq_samples_smooth,
+        cfg.angle_samples,
+        cfg.freq_samples,
         cfg.min_db,
     )
     _, _, vertical_interp = _interpolate_isobar_heatmap(
         base_angles_deg,
         freq_hz,
         vertical,
-        cfg.isobar_angle_samples_smooth,
-        cfg.isobar_freq_samples_smooth,
+        cfg.angle_samples,
+        cfg.freq_samples,
         cfg.min_db,
     )
 
     z_freq = polar["impedance_freq_hz"].astype(np.float32, copy=False)
     z_real = polar["impedance_real"].astype(np.float32, copy=False)
     z_imag = polar["impedance_imag"].astype(np.float32, copy=False)
+    z_names = polar["impedance_radiator_names"]
 
     np.savez_compressed(
         cfg.output_npz,
@@ -226,17 +244,18 @@ def prepare_visualization_data(cfg: PrepConfig):
         horizontal_isobar_db=horizontal_interp,
         vertical_isobar_db=vertical_interp,
         impedance_freq_hz=z_freq,
+        impedance_radiator_names=z_names,
         impedance_real=z_real,
         impedance_imag=z_imag,
         clip_min_db=np.float32(cfg.min_db),
         clip_max_db=np.float32(cfg.max_db),
-        horizontal_reference_angle_deg=np.float32(cfg.horizontal_reference_angle_deg),
-        vertical_reference_angle_deg=np.float32(cfg.vertical_reference_angle_deg),
+        horizontal_reference_angle_deg=np.float32(cfg.hor_ref_angle),
+        vertical_reference_angle_deg=np.float32(cfg.vert_ref_angle),
     )
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Prepare solver output for visualization.")
+def _build_arg_parser(prog: str | None = None) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, description="Prepare solver output for visualization.")
     parser.add_argument(
         "input_polar_npz",
         nargs="?",
@@ -264,40 +283,28 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Maximum dB clipping value",
     )
     parser.add_argument(
-        "--isobar-angle-samples-smooth",
-        type=int,
-        default=PrepConfig.isobar_angle_samples_smooth,
-        help="Number of smoothed angular samples for isobar interpolation",
-    )
-    parser.add_argument(
-        "--isobar-freq-samples-smooth",
-        type=int,
-        default=PrepConfig.isobar_freq_samples_smooth,
-        help="Number of smoothed frequency samples for isobar interpolation",
-    )
-    parser.add_argument(
-        "--isobar-octave-smooth-fraction",
+        "--octave-smoothing",
         type=float,
-        default=PrepConfig.isobar_octave_smooth_fraction,
+        default=PrepConfig.octave_smoothing,
         help="Fractional-octave smoothing denominator; use 0 to disable",
     )
     parser.add_argument(
-        "--horizontal-reference-angle-deg",
+        "--hor-ref-angle",
         type=float,
-        default=PrepConfig.horizontal_reference_angle_deg,
+        default=PrepConfig.hor_ref_angle,
         help="Horizontal reference angle for normalization",
     )
     parser.add_argument(
-        "--vertical-reference-angle-deg",
+        "--vert-ref-angle",
         type=float,
-        default=PrepConfig.vertical_reference_angle_deg,
+        default=PrepConfig.vert_ref_angle,
         help="Vertical reference angle for normalization",
     )
     return parser
 
 
 def _config_from_args(args: argparse.Namespace) -> PrepConfig:
-    octave_fraction = args.isobar_octave_smooth_fraction
+    octave_fraction = args.octave_smoothing
     if octave_fraction == 0:
         octave_fraction = None
 
@@ -306,16 +313,18 @@ def _config_from_args(args: argparse.Namespace) -> PrepConfig:
         output_npz=args.output_npz,
         min_db=args.min_db,
         max_db=args.max_db,
-        isobar_angle_samples_smooth=args.isobar_angle_samples_smooth,
-        isobar_freq_samples_smooth=args.isobar_freq_samples_smooth,
-        isobar_octave_smooth_fraction=octave_fraction,
-        horizontal_reference_angle_deg=args.horizontal_reference_angle_deg,
-        vertical_reference_angle_deg=args.vertical_reference_angle_deg,
+        octave_smoothing=octave_fraction,
+        hor_ref_angle=args.hor_ref_angle,
+        vert_ref_angle=args.vert_ref_angle,
     )
 
 
-if __name__ == "__main__":
-    args = _build_arg_parser().parse_args()
+def main(argv: list[str] | None = None, prog: str | None = None) -> None:
+    args = _build_arg_parser(prog=prog).parse_args(argv)
     config = _config_from_args(args)
     prepare_visualization_data(config)
     print(f"Saved {config.output_npz}")
+
+
+if __name__ == "__main__":
+    main()

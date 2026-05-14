@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bemppsolver"
+version = "0.1.0"
+description = "Boundary element loudspeaker radiation solver"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "bempp-cl",
+  "matplotlib",
+  "meshio",
+  "numpy",
+  "pyopencl",
+  "scipy",
+]
+
+[project.scripts]
+bemps = "bemppsolver.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bemppsolver"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

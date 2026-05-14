@@ -23,13 +23,9 @@ from typing import Dict, List, Tuple
 import meshio
 import numpy as np
 
+from bemppsolver.defaults import EXAMPLE_CLEAN_MESH_PATH, EXAMPLE_MESH_PATH
 
-# =========================
-# User settings (no-args run)
-# =========================
-# Edit these values to run this module directly without command-line arguments.
-INPUT_MSH = "samplemesh.msh"
-OUTPUT_MSH = "samplemesh_clean.msh"
+
 MERGE_TOL = 1e-9
 AREA_TOL = 0.0
 WRITE_BINARY = False
@@ -306,10 +302,10 @@ def _print_stats(label: str, s: MeshStats) -> None:
     print(f"  components        : {s.components}")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Clean/stitch a triangle .msh surface mesh for BEM.")
-    parser.add_argument("input_msh", nargs="?", default=INPUT_MSH, help="Input .msh file")
-    parser.add_argument("output_msh", nargs="?", default=OUTPUT_MSH, help="Output cleaned .msh file")
+def main(argv: list[str] | None = None, prog: str | None = None) -> None:
+    parser = argparse.ArgumentParser(prog=prog, description="Clean/stitch a triangle .msh surface mesh for BEM.")
+    parser.add_argument("input_msh", nargs="?", default=EXAMPLE_MESH_PATH, help="Input .msh file")
+    parser.add_argument("output_msh", nargs="?", default=EXAMPLE_CLEAN_MESH_PATH, help="Output cleaned .msh file")
     parser.add_argument(
         "--merge-tol",
         type=float,
@@ -329,7 +325,7 @@ def main() -> None:
         help="Write binary .msh (default is ASCII gmsh22 for compatibility)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     mesh = meshio.read(args.input_msh)
     cleaned, changes, before, after = clean_mesh(mesh, merge_tol=args.merge_tol, area_tol=args.area_tol)

@@ -10,15 +10,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
+from bemppsolver.defaults import FORMATTED_OUTPUT_NPZ, PLOT_OUTPUT_DIR
+
 
 @dataclass
 class VisualizerConfig:
-    input_npz: Path = Path(
-        "pressure_data_formatted.npz"
-    )
-    output_horizontal_png: Path = Path("horizontal_isobar.png")
-    output_vertical_png: Path = Path("vertical_isobar.png")
-    output_impedance_png: Path = Path("acoustic_impedance.png")
+    input_npz: Path = FORMATTED_OUTPUT_NPZ
+    output_dir: Path = PLOT_OUTPUT_DIR
     colorbar_tick_step_db: float = 3.0
     figure_width_in: float = 11.0
     figure_height_in: float = 6.0
@@ -174,6 +172,7 @@ def _save_isobar_plot(
 def _save_impedance_plot(
     output_path: Path,
     impedance_freq_hz: np.ndarray,
+    radiator_names: np.ndarray,
     impedance_real: np.ndarray,
     impedance_imag: np.ndarray,
     figure_width_in: float,
@@ -184,12 +183,24 @@ def _save_impedance_plot(
 
     fig, ax = plt.subplots(figsize=(figure_width_in, figure_height_in), dpi=figure_dpi)
 
-    ax.plot(impedance_freq_hz, impedance_real, linewidth=2, label="Z real")
-    ax.plot(impedance_freq_hz, impedance_imag, linewidth=2, linestyle="--", label="Z imag")
+    if impedance_real.ndim == 1:
+        impedance_real = impedance_real[np.newaxis, :]
+        impedance_imag = impedance_imag[np.newaxis, :]
+
+    for i in range(impedance_real.shape[0]):
+        name = str(radiator_names[i]) if i < radiator_names.size else f"Radiator {i + 1}"
+        ax.plot(impedance_freq_hz, impedance_real[i], linewidth=2, label=f"{name} Z real")
+        ax.plot(
+            impedance_freq_hz,
+            impedance_imag[i],
+            linewidth=2,
+            linestyle="--",
+            label=f"{name} Z imag",
+        )
 
     _setup_log_frequency_axis(ax)
     ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("Acoustic Impedance (Pa·s/m³)")
+    ax.set_ylabel("Acoustic Impedance (Pa*s/m^3)")
     ax.set_title("Acoustic Impedance")
     ax.grid(which="major", color="#808080", linewidth=0.8)
     ax.legend()
@@ -200,6 +211,10 @@ def _save_impedance_plot(
 
 
 def generate_plots(dataset: dict[str, np.ndarray], cfg: VisualizerConfig) -> dict[str, str]:
+    output_horizontal_png = cfg.output_dir / "horizontal_isobar.png"
+    output_vertical_png = cfg.output_dir / "vertical_isobar.png"
+    output_impedance_png = cfg.output_dir / "acoustic_impedance.png"
+
     angle_deg = dataset["isobar_angle_deg"].astype(float)
     freqs_hz = dataset["isobar_freq_hz"].astype(float)
     horizontal_spl = dataset["horizontal_isobar_db"].astype(float)
@@ -207,12 +222,13 @@ def generate_plots(dataset: dict[str, np.ndarray], cfg: VisualizerConfig) -> dic
     impedance_freq_hz = dataset["impedance_freq_hz"].astype(float)
     impedance_real = dataset["impedance_real"].astype(float)
     impedance_imag = dataset["impedance_imag"].astype(float)
+    radiator_names = dataset.get("impedance_radiator_names", np.asarray(["Radiator"]))
 
     clip_min_db = float(dataset["clip_min_db"])
     clip_max_db = float(dataset["clip_max_db"])
 
     _save_isobar_plot(
-        output_path=cfg.output_horizontal_png,
+        output_path=output_horizontal_png,
         angle_deg=angle_deg,
         freqs_hz=freqs_hz,
         spl_matrix=horizontal_spl,
@@ -229,7 +245,7 @@ def generate_plots(dataset: dict[str, np.ndarray], cfg: VisualizerConfig) -> dic
     )
 
     _save_isobar_plot(
-        output_path=cfg.output_vertical_png,
+        output_path=output_vertical_png,
         angle_deg=angle_deg,
         freqs_hz=freqs_hz,
         spl_matrix=vertical_spl,
@@ -246,8 +262,9 @@ def generate_plots(dataset: dict[str, np.ndarray], cfg: VisualizerConfig) -> dic
     )
 
     _save_impedance_plot(
-        output_path=cfg.output_impedance_png,
+        output_path=output_impedance_png,
         impedance_freq_hz=impedance_freq_hz,
+        radiator_names=radiator_names,
         impedance_real=impedance_real,
         impedance_imag=impedance_imag,
         figure_width_in=cfg.figure_width_in,
@@ -256,14 +273,14 @@ def generate_plots(dataset: dict[str, np.ndarray], cfg: VisualizerConfig) -> dic
     )
 
     return {
-        "horizontal_isobar_png": str(cfg.output_horizontal_png),
-        "vertical_isobar_png": str(cfg.output_vertical_png),
-        "acoustic_impedance_png": str(cfg.output_impedance_png),
+        "horizontal_isobar_png": str(output_horizontal_png),
+        "vertical_isobar_png": str(output_vertical_png),
+        "acoustic_impedance_png": str(output_impedance_png),
     }
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate directivity/impedance PNG plots.")
+def _build_arg_parser(prog: str | None = None) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, description="Generate directivity/impedance PNG plots.")
     parser.add_argument(
         "input_npz",
         nargs="?",
@@ -272,40 +289,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Path to pressure_data_formatted.npz",
     )
     parser.add_argument(
-        "--output-horizontal-png",
+        "--output-dir",
         type=Path,
-        default=VisualizerConfig.output_horizontal_png,
-        help="Output path for horizontal isobar plot PNG",
-    )
-    parser.add_argument(
-        "--output-vertical-png",
-        type=Path,
-        default=VisualizerConfig.output_vertical_png,
-        help="Output path for vertical isobar plot PNG",
-    )
-    parser.add_argument(
-        "--output-impedance-png",
-        type=Path,
-        default=VisualizerConfig.output_impedance_png,
-        help="Output path for acoustic impedance plot PNG",
-    )
-    parser.add_argument(
-        "--isobar-interp-freq-factor",
-        type=int,
-        default=VisualizerConfig.isobar_interp_freq_factor,
-        help="Frequency interpolation factor for isobar smoothing (>=1)",
+        default=VisualizerConfig.output_dir,
+        help="Directory for generated plot PNG files",
     )
     return parser
 
 
-def main() -> None:
-    args = _build_arg_parser().parse_args()
+def main(argv: list[str] | None = None, prog: str | None = None) -> None:
+    args = _build_arg_parser(prog=prog).parse_args(argv)
     cfg = VisualizerConfig(
         input_npz=args.input_npz,
-        output_horizontal_png=args.output_horizontal_png,
-        output_vertical_png=args.output_vertical_png,
-        output_impedance_png=args.output_impedance_png,
-        isobar_interp_freq_factor=args.isobar_interp_freq_factor,
+        output_dir=args.output_dir,
     )
 
     dataset = load_data(cfg.input_npz)

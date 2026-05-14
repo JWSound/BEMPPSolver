@@ -1,6 +1,5 @@
-acoustic_impedance.png
-horizontal_isobar.png
-pressure_data_formatted.npz
-pressure_data.npz
-samplemesh_clean.msh
-vertical_isobar.png
+/.vscode/
+/__pycache__/
+/.venv/
+/testprojectignore/
+tests/__pycache__/
