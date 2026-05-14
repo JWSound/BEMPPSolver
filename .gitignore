@@ -1,5 +1,47 @@
-/.vscode/
-/__pycache__/
-/.venv/
-/testprojectignore/
-tests/__pycache__/
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local scratch/example projects
+testprojectignore/
+
+# Generated BEM solver outputs
+pressure_data*.npz
+pressure_data_formatted.npz
+horizontal_isobar.png
+vertical_isobar.png
+acoustic_impedance.png
+*_clean.msh
+
+# Keep curated documentation example artifacts trackable.
+!docs/examples/**/*.npz
+!docs/examples/**/*.png
+!docs/examples/**/*_clean.msh
